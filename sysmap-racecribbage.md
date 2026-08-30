@@ -1,16 +1,18 @@
 <!-- SYSMAP -->
 # SYSMAP — RaceCribbage
-Version : 2.2 | 2026-08-29
+Version : 2.3 | 2026-08-29
 Cible : PWA JS pur (HTML/CSS/JS, ES modules), déploiement Netlify — PAS un Cloudflare Worker
 
 ---
 
 ## Statut global
 Modèle de jeu v2 figé (pivot Qualif). Implémentation MVP en cours.
-- Phase 1 ✅ `cards.js` + `scoring.js` (12 tests verts)
-- Phase 2 ✅ `deck.js` (9 tests verts)
-- Phase 3 ✅ `pegging.js` (régulier, plancher 1pt en filet) — 23 tests verts
+- Phase 1 ✅ `cards.js` + `scoring.js` (12 tests verts) — commit `ee2ae0e`
+- Phase 2 ✅ `deck.js` (9 tests verts) — commit `ea8be60`
+- Phase 3 ✅ `pegging.js` (régulier, plancher 1pt en filet) — 23 tests verts — commit `7d0572e`
 - Phase 4 ⏳ `game-engine.js` (orchestration régulier + Qualif)
+
+44 tests verts au total (`node --test`). Outillage debug : voir section « Outillage (hors MVP) ».
 
 Le sysmap est la **seule doc de conception du repo** : RULES.md / ARCHITECTURE.md /
 TODO.md / README.md ne sont plus versionnés — tout le modèle validé est ici.
@@ -32,10 +34,13 @@ RaceCribbage/
 │   ├── scoring.js   ✅  scoreShow + heels
 │   ├── deck.js      ✅  createDeck · shuffle · dealRegular · cut · dealQualifRound · allDistinct
 │   └── pegging.js   ✅  createPegging · legalPlays · playCard · sayGo · isComplete
-└── tests/
-    ├── scoring.test.js  ✅  12 cas
-    ├── deck.test.js     ✅  9 cas
-    └── pegging.test.js  ✅  23 cas
+├── tests/
+│   ├── scoring.test.js  ✅  12 cas
+│   ├── deck.test.js     ✅  9 cas
+│   └── pegging.test.js  ✅  23 cas
+└── tools/                    outillage debug — HORS MVP, non versionné dans la logique de jeu
+    ├── course-prototype.html  viz piste Course 3 voies + randomisation de main (import réel deck.js/scoring.js)
+    └── ouvrir-prototype.bat   lanceur Windows : serveur local + navigateur
 ```
 
 ### Cible
@@ -56,6 +61,31 @@ V2 différé (à ajouter plus tard) :
 ├── js/track.js        géométrie 3 voies config · adjacences · applyMove · draft · checkWin
 ├── tests/track.test.js
 ```
+
+---
+
+## Outillage (hors MVP)
+
+Dossier `tools/` — outils de debug/exploration, **jamais** importés par le jeu ni la PWA.
+Ne fait pas partie du scope MVP ; à ne pas relier à `index.html` ou `game-engine.js`.
+
+### `tools/course-prototype.html`
+- Visualisation de la **piste Course V2** : 3 voies décalées (quinconce, voie centre à `HOLE_SP/2`),
+  roster jusqu'à 12 pions, boutons *point réel* (changement de voie autorisé) / *point plancher*
+  (même voie seulement) — sert à éprouver visuellement les règles de déplacement V2.
+- Panel « Randomiser une main » branché sur le **vrai moteur** :
+  `import ../js/deck.js` (`createDeck`, `shuffle`, `cut`) + `import ../js/scoring.js` (`scoreShow`).
+  Tirage : `shuffle(createDeck())` → 4 premières = main → `cut(reste).starter` = carte universelle
+  (5ᵉ carte) → affiche `scoreShow(main, universelle).total` + breakdown.
+- Consommation en **import seulement** — ne modifie jamais `deck.js` / `scoring.js` / `pegging.js`.
+- Import ES module ⇒ **serveur local requis** (bloqué en `file://`). Import dynamique + repli :
+  la piste reste fonctionnelle même si les modules ne chargent pas.
+
+### `tools/ouvrir-prototype.bat`
+- Lanceur Windows (double-clic) : `cd` racine repo → `py -m http.server 8000` dans une fenêtre
+  dédiée (`cmd /k`) → attend 1 s → ouvre `http://localhost:8000/tools/course-prototype.html`.
+- Fermer la fenêtre serveur = arrêter le serveur (pas de process fantôme).
+- Port 8000 occupé : l'erreur s'affiche telle quelle, aucune gestion.
 
 ---
 
@@ -253,6 +283,18 @@ personnalisation pions · multijoueur en ligne · backend (BDD/auth/matchmaking)
 NPC / IA avancée · plusieurs tours & pistes par niveau de difficulté
 
 ---
+
+## Changements v2.3
+- **Phase 3 commitée** (`7d0572e`) : `js/pegging.js` + `tests/pegging.test.js` + sysmap v2.2.
+  Repo à jour, 44 tests verts. Commits Phases 1–3 référencés dans « Statut global ».
+- **Nouveau dossier `tools/`** (outillage debug, hors MVP — voir section « Outillage (hors MVP) ») :
+  - `tools/course-prototype.html` : viz piste Course 3 voies + panel « Randomiser une main »
+    branché sur le vrai moteur (`import ../js/deck.js` + `../js/scoring.js`) — tire 4 cartes
+    + 1 carte universelle via `cut()`, affiche le score `scoreShow`. Non relié à `index.html`
+    ni `game-engine.js`. Import dynamique + repli `file://`.
+  - `tools/ouvrir-prototype.bat` : lanceur Windows (serveur local `py -m http.server 8000`
+    dans sa fenêtre + ouverture navigateur ; fermer la fenêtre = stopper).
+- Aucun changement de modèle de jeu, de règle, ni de module `js/` du MVP.
 
 ## Changements v2.2
 - **Phase 3 livrée** : `js/pegging.js` (`createPegging`, `legalPlays`, `playCard`, `sayGo`,

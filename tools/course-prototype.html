@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RaceCribbage — Prototype piste Course</title>
+<!--
+  Outil debug/exploration — NE fait PAS partie du MVP (pas relié a index.html ni game-engine.js).
+  Consomme le vrai moteur en import seulement : ../js/deck.js et ../js/scoring.js.
+  Les imports ES module ne fonctionnent pas en file:// : ouvrir via un serveur local
+  (npx serve  ou  python -m http.server) depuis la racine du repo.
+-->
+<style>
+  :root{
+    --bg:#15181b; --panel:#1e2226; --panel2:#262b30; --line:#33393f;
+    --text:#e8e6df; --muted:#9a9d9f; --accent:#c9a227;
+    --track:#1a1d20; --hole:#2d3236; --hole-b:#454c52;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  h1{font-size:19px;font-weight:600;margin:0 0 2px;}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 20px;}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:16px;}
+  .panel h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 12px;}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  label{font-size:13px;color:var(--muted);}
+  input[type=number]{
+    width:64px;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:6px;padding:5px 8px;font-size:13px;
+  }
+  button{
+    background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:6px;padding:7px 12px;font-size:13px;cursor:pointer;
+  }
+  button:hover{border-color:var(--accent);}
+  button:disabled{opacity:.35;cursor:not-allowed;}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#20180a;font-weight:600;}
+  button.primary:hover{opacity:.9;}
+
+  /* ---- track ---- */
+  .track-wrap{overflow-x:auto;background:var(--track);border-radius:10px;padding:20px 30px;}
+  .track{position:relative;height:220px;}
+  .lane-line{position:absolute;left:0;right:0;height:1px;background:var(--line);}
+  .lane-label{position:absolute;left:-10px;font-size:11px;color:var(--muted);font-family:ui-monospace,monospace;transform:translateX(-100%);white-space:nowrap;}
+  .hole{
+    position:absolute;width:22px;height:22px;border-radius:50%;
+    background:var(--hole);border:1px solid var(--hole-b);
+  }
+  .hole-idx{position:absolute;font-size:9px;color:var(--muted);font-family:ui-monospace,monospace;transform:translateX(-50%);}
+  .peg{
+    position:absolute;width:26px;height:26px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:700;color:#14171a;
+    transition:left .3s ease,top .3s ease;box-shadow:0 0 0 2px var(--bg);
+  }
+
+  /* ---- peg roster ---- */
+  .roster{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+  .chip{
+    display:flex;align-items:center;gap:7px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:20px;padding:5px 12px 5px 6px;
+    cursor:pointer;font-size:13px;
+  }
+  .chip.active{border-color:var(--accent);}
+  .chip .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;}
+  .chip .score{color:var(--muted);font-family:ui-monospace,monospace;font-size:12px;}
+
+  .msg{font-size:13px;color:var(--accent);min-height:18px;margin-top:4px;}
+
+  /* ---- cards ---- */
+  .cards{display:flex;flex-wrap:wrap;gap:8px;}
+  .card{
+    width:46px;height:62px;border-radius:7px;background:var(--panel2);
+    border:1px solid var(--line);display:flex;flex-direction:column;
+    align-items:center;justify-content:center;font-family:ui-monospace,monospace;
+    font-size:16px;font-weight:700;
+  }
+  .card.black{color:#e8e6df;}
+  .card.red{color:#e0616b;}
+  .card .suit{font-size:14px;font-weight:400;}
+  /* 5e carte tiree = carte universelle */
+  .card.universal{border-color:var(--accent);}
+  .hand-score{margin-top:14px;font-size:15px;font-weight:600;color:var(--text);min-height:20px;}
+  .hand-score .detail{display:block;margin-top:4px;font-size:12px;font-weight:400;color:var(--muted);font-family:ui-monospace,monospace;}
+  .hand-hint{margin:10px 0 0;font-size:11px;color:var(--muted);}
+  .hand-hint code{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px;}
+</style>
+</head>
+<body>
+
+<h1>RaceCribbage — prototype piste Course</h1>
+<p class="sub">Outil de test visuel — 3 voies décalées (quinconce), jusqu'à 12 pions, randomisation de main pour scénarios. Ne fait pas partie du moteur de jeu (pegging.js) — usage debug/exploration uniquement.</p>
+
+<div class="panel">
+  <h2>Piste</h2>
+  <div class="row">
+    <label>Longueur (trous par voie)</label>
+    <input type="number" id="trackLenInput" min="12" max="48" value="24">
+    <button onclick="applyTrackLength()">Appliquer</button>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Pions</h2>
+  <div class="roster" id="roster"></div>
+  <div class="row">
+    <button onclick="addPeg()" id="addBtn">+ Ajouter un pion</button>
+    <button onclick="removePeg()" id="removeBtn">− Retirer le dernier</button>
+    <button onclick="resetPositions()">Réinitialiser positions/scores</button>
+  </div>
+  <div class="row" style="margin-top:12px;">
+    <button class="primary" onclick="movePeg('real')">Point réel — voie libre autorisée</button>
+    <button onclick="movePeg('floor')">Point plancher — même voie seulement</button>
+  </div>
+  <div class="msg" id="msg"></div>
+</div>
+
+<div class="panel">
+  <div class="track-wrap"><div class="track" id="track"></div></div>
+</div>
+
+<div class="panel">
+  <h2>Randomiser une main</h2>
+  <div class="row" style="margin-bottom:10px;">
+    <label>Main : 4 cartes + 1 carte universelle</label>
+    <button onclick="randomizeHand()">Randomiser</button>
+  </div>
+  <div class="cards" id="cards"></div>
+  <div class="hand-score" id="handScore"></div>
+  <p class="hand-hint">Imports ES module : ouvrir via un serveur local (<code>npx serve</code> ou <code>python -m http.server</code>), jamais en <code>file://</code>.</p>
+</div>
+
+<script type="module">
+// --- Vrai moteur : import dynamique + repli si file:// bloque les modules -----
+let engine = null;
+try {
+  const [deckMod, scoringMod] = await Promise.all([
+    import('../js/deck.js'),
+    import('../js/scoring.js'),
+  ]);
+  engine = {
+    createDeck: deckMod.createDeck,
+    shuffle: deckMod.shuffle,
+    cut: deckMod.cut,
+    scoreShow: scoringMod.scoreShow,
+  };
+} catch (err) {
+  console.warn('[course-prototype] moteur non chargé — lancer un serveur local :', err);
+}
+
+const PALETTE=['#e63946','#f4a261','#e9c46a','#2a9d8f','#8ecae6','#219ebc','#ffb703','#fb8500','#6a4c93','#9d4edd','#c9184a','#52b788'];
+const LANES=['top','mid','bottom'];
+const LANE_LABEL={top:'voie haute',mid:'voie centre (décalée)',bottom:'voie basse'};
+
+let trackLength=24;
+let pegs=[
+  {id:1,lane:'bottom',index:0,score:0},
+  {id:2,lane:'top',index:0,score:0}
+];
+let nextId=3;
+let activeId=1;
+
+const HOLE_SP=44, HOLE_D=22, X0=10;
+const LANE_Y={top:30,mid:100,bottom:170};
+
+function holeX(lane,i){return X0+i*HOLE_SP+(lane==='mid'?HOLE_SP/2:0);}
+
+function adjacentLane(lane,pegsAtIndex){
+  // mid is adjacent to both top and bottom; top/bottom only adjacent to mid
+  if(lane==='mid'){
+    const topFree=!pegsAtIndex.some(p=>p.lane==='top');
+    const bottomFree=!pegsAtIndex.some(p=>p.lane==='bottom');
+    if(topFree) return 'top';
+    if(bottomFree) return 'bottom';
+    return null;
+  }
+  const midFree=!pegsAtIndex.some(p=>p.lane==='mid');
+  return midFree ? 'mid' : null;
+}
+
+function renderTrack(){
+  const t=document.getElementById('track');
+  t.innerHTML='';
+  const trackWidth=X0+ (trackLength)*HOLE_SP + 40;
+  t.style.width=trackWidth+'px';
+
+  LANES.forEach(lane=>{
+    const line=document.createElement('div');
+    line.className='lane-line';
+    line.style.top=(LANE_Y[lane]+11)+'px';
+    t.appendChild(line);
+
+    const lbl=document.createElement('div');
+    lbl.className='lane-label';
+    lbl.style.top=(LANE_Y[lane]+3)+'px';
+    lbl.textContent=LANE_LABEL[lane];
+    t.appendChild(lbl);
+
+    for(let i=0;i<trackLength;i++){
+      const h=document.createElement('div');
+      h.className='hole';
+      h.style.left=holeX(lane,i)+'px';
+      h.style.top=LANE_Y[lane]+'px';
+      t.appendChild(h);
+      if(lane==='bottom' && i%4===0){
+        const idx=document.createElement('div');
+        idx.className='hole-idx';
+        idx.style.left=(holeX(lane,i)+HOLE_D/2)+'px';
+        idx.style.top=(LANE_Y.bottom+28)+'px';
+        idx.textContent=i;
+        t.appendChild(idx);
+      }
+    }
+  });
+
+  pegs.forEach(p=>{
+    const el=document.createElement('div');
+    el.className='peg';
+    el.style.left=(holeX(p.lane,p.index)-2)+'px';
+    el.style.top=(LANE_Y[p.lane]-2)+'px';
+    el.style.background=PALETTE[(p.id-1)%12];
+    el.textContent='J'+p.id;
+    t.appendChild(el);
+  });
+}
+
+function renderRoster(){
+  const r=document.getElementById('roster');
+  r.innerHTML='';
+  pegs.forEach(p=>{
+    const chip=document.createElement('div');
+    chip.className='chip'+(p.id===activeId?' active':'');
+    chip.onclick=()=>{activeId=p.id;renderRoster();};
+    const dot=document.createElement('div');
+    dot.className='dot'; dot.style.background=PALETTE[(p.id-1)%12];
+    const label=document.createElement('span'); label.textContent='J'+p.id;
+    const score=document.createElement('span'); score.className='score'; score.textContent=p.score;
+    chip.append(dot,label,score);
+    r.appendChild(chip);
+  });
+  document.getElementById('addBtn').disabled=pegs.length>=12;
+  document.getElementById('removeBtn').disabled=pegs.length<=1;
+}
+
+function render(){renderTrack();renderRoster();}
+
+function addPeg(){
+  if(pegs.length>=12) return;
+  pegs.push({id:nextId,lane:'bottom',index:0,score:0});
+  activeId=nextId;
+  nextId++;
+  render();
+}
+function removePeg(){
+  if(pegs.length<=1) return;
+  const removed=pegs.pop();
+  if(activeId===removed.id) activeId=pegs[pegs.length-1].id;
+  render();
+}
+function resetPositions(){
+  pegs.forEach((p,i)=>{p.lane=LANES[i%3];p.index=0;p.score=0;});
+  document.getElementById('msg').textContent='';
+  render();
+}
+function applyTrackLength(){
+  const v=parseInt(document.getElementById('trackLenInput').value,10);
+  trackLength=Math.max(12,Math.min(48,v||24));
+  pegs.forEach(p=>{p.index=Math.min(p.index,trackLength-1);});
+  render();
+}
+
+function movePeg(kind){
+  const msg=document.getElementById('msg');
+  const peg=pegs.find(p=>p.id===activeId);
+  if(!peg) return;
+  if(peg.index>=trackLength-1){msg.textContent='J'+peg.id+' a déjà atteint la ligne d\'arrivée.';return;}
+  const nextIndex=peg.index+1;
+  const occupants=(idx,lane)=>pegs.filter(p=>p!==peg && p.index===idx && p.lane===lane);
+  const straightBlocked=occupants(nextIndex,peg.lane).length>0;
+
+  if(kind==='real'){
+    if(!straightBlocked){
+      peg.index=nextIndex;
+      msg.textContent='J'+peg.id+' — point réel : avance dans sa voie.';
+    } else {
+      const pegsAtNext=pegs.filter(p=>p!==peg && p.index===peg.index);
+      const alt=adjacentLane(peg.lane,pegsAtNext);
+      if(alt){
+        peg.lane=alt;
+        msg.textContent='J'+peg.id+' — point réel : voie bloquée devant, dépassement diagonal vers '+LANE_LABEL[alt]+'.';
+      } else {
+        msg.textContent='J'+peg.id+' — point réel : voie directe ET voie adjacente bloquées, aucun trou libre.';
+        render(); return;
+      }
+    }
+    peg.score++;
+  } else {
+    if(straightBlocked){
+      msg.textContent='J'+peg.id+' — point plancher : case bloquée devant, pas de changement de voie possible, pion reste en place.';
+    } else {
+      peg.index=nextIndex;
+      peg.score++;
+      msg.textContent='J'+peg.id+' — point plancher : avance (voie libre).';
+    }
+  }
+  render();
+}
+
+// --- Randomisation de main : vrai tirage via deck.js + score via scoring.js ---
+const RANK_LABEL={1:'A',11:'J',12:'Q',13:'K'};
+const SUIT_VIEW={
+  S:{sym:'♠',cls:'black'},
+  C:{sym:'♣',cls:'black'},
+  H:{sym:'♥',cls:'red'},
+  D:{sym:'♦',cls:'red'}
+};
+
+function cardFace(card){
+  const v=SUIT_VIEW[card.suit];
+  return {label:RANK_LABEL[card.rank]||String(card.rank),sym:v.sym,cls:v.cls};
+}
+function makeCardEl(card,extraClass){
+  const f=cardFace(card);
+  const el=document.createElement('div');
+  el.className='card '+f.cls+(extraClass?' '+extraClass:'');
+  el.innerHTML=f.label+'<span class="suit">'+f.sym+'</span>';
+  return el;
+}
+function summariseBreakdown(breakdown){
+  if(!breakdown||!breakdown.length) return 'aucune combinaison';
+  const counts={};
+  for(const e of breakdown) counts[e.type]=(counts[e.type]||0)+1;
+  return Object.entries(counts)
+    .map(([type,n])=>n>1?n+'×'+type:type)
+    .join(', ');
+}
+
+function randomizeHand(){
+  const box=document.getElementById('cards');
+  const scoreBox=document.getElementById('handScore');
+  box.innerHTML='';
+  scoreBox.innerHTML='';
+
+  if(!engine){
+    scoreBox.textContent='Moteur non chargé — ouvrir via un serveur local (npx serve ou python -m http.server), pas en file://.';
+    return;
+  }
+
+  // createDeck() -> shuffle -> 4 premieres = main -> cut() sur le reste = carte universelle (5e carte)
+  const deck=engine.shuffle(engine.createDeck());
+  const hand=deck.slice(0,4);
+  const {starter:universal}=engine.cut(deck.slice(4));
+
+  hand.forEach(card=>box.appendChild(makeCardEl(card)));
+  box.appendChild(makeCardEl(universal,'universal'));
+
+  let result;
+  try{
+    result=engine.scoreShow(hand,universal);
+  }catch(err){
+    scoreBox.textContent='Erreur de calcul : '+err.message;
+    return;
+  }
+  const uf=cardFace(universal);
+  scoreBox.innerHTML=
+    'Score : '+result.total+
+    '<span class="detail">'+summariseBreakdown(result.breakdown)+
+    ' · carte universelle : '+uf.label+uf.sym+'</span>';
+}
+
+// Modules = scope isole : ré-exposer les handlers utilisés par les onclick inline.
+Object.assign(window,{applyTrackLength,addPeg,removePeg,resetPositions,movePeg,randomizeHand});
+
+render();
+randomizeHand();
+</script>
+</body>
+</html>
