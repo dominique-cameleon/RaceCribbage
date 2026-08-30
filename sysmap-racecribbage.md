@@ -1,14 +1,19 @@
 <!-- SYSMAP -->
 # SYSMAP — RaceCribbage
-Version : 2.0 | 2026-08-29
+Version : 2.1 | 2026-08-29
 Cible : PWA JS pur (HTML/CSS/JS, ES modules), déploiement Netlify — PAS un Cloudflare Worker
 
 ---
 
 ## Statut global
-Conception validée, implémentation non démarrée.
-Commit repo : d020943 (docs initiaux) + sysmap v1.0.
-Ce sysmap fige le modèle de jeu v2 après pivot du mode Qualif.
+Modèle de jeu v2 figé (pivot Qualif). Implémentation MVP en cours.
+- Phase 1 ✅ `cards.js` + `scoring.js` (12 tests verts)
+- Phase 2 ✅ `deck.js` (9 tests verts)
+- Phase 3 ⏳ `pegging.js` (régulier) — à venir
+- Phase 4 ⏳ `game-engine.js` (orchestration régulier + Qualif)
+
+Le sysmap est la **seule doc de conception du repo** : RULES.md / ARCHITECTURE.md /
+TODO.md / README.md ne sont plus versionnés — tout le modèle validé est ici.
 
 MVP actuel : Mode régulier 1v1 + Mode Qualif solo.
 V2 différé : La Course à 12 joueurs (piste 3 voies), alimentée par le score Qualif.
@@ -20,26 +25,27 @@ V2 différé : La Course à 12 joueurs (piste 3 voies), alimentée par le score 
 ### Actuelle
 ```
 RaceCribbage/
-├── README.md
-├── RULES.md          §1 régulier · §2 chinois · §3 comparatif · §4 mécanique piste
-├── ARCHITECTURE.md   stack PWA, modules, structure fichiers
-├── TODO.md           bloquants (tous cochés) · V2+ hors scope
-└── sysmap-racecribbage.md
+├── package.json              "type": "module" · script test : node --test "tests/**/*.test.js"
+├── sysmap-racecribbage.md    seule doc de conception
+├── js/
+│   ├── cards.js     ✅  modèle carte + cardValue + cardId + SUITS/RANKS
+│   ├── scoring.js   ✅  scoreShow + heels
+│   └── deck.js      ✅  createDeck · shuffle · dealRegular · cut · dealQualifRound · allDistinct
+└── tests/
+    ├── scoring.test.js  ✅  12 cas
+    └── deck.test.js     ✅  9 cas
 ```
 
 ### Cible
 
-MVP :
+MVP (reste à faire) :
 ```
 RaceCribbage/
 ├── js/
-│   ├── cards.js        modèle carte + valeurs
-│   ├── scoring.js      comptage pur 5 cartes (commun régulier + Qualif)
-│   ├── deck.js         shuffle(rng) · dealRegular · dealQualifRound · cut
 │   ├── pegging.js      séquence de pose régulier · legalPlay · playCard · go · comptage runtime
 │   └── game-engine.js  createGame + reduce(state, action) + phases (régulier + Qualif, sans track)
 ├── tests/
-│   ├── scoring.test.js · deck.test.js · pegging.test.js · game-engine.test.js
+│   ├── pegging.test.js · game-engine.test.js
 ├── index.html · manifest.json · service-worker.js   (phase UI, plus tard)
 └── css/ · assets/cards/
 ```
@@ -54,9 +60,10 @@ V2 différé (à ajouter plus tard) :
 
 ## Dépendances
 - Runtime : ES modules natifs — navigateur + Node 18+, PAS de bundler
-- Zéro dépendance externe (contrainte bootstrap)
-- Tests : `node --test` (natif), un fichier par module
-- RNG : injectable en paramètre, défaut `Math.random` (déterminisme des tests)
+- Zéro dépendance externe (contrainte bootstrap) — `package.json` : `"type": "module"`, aucune `dependencies`
+- Tests : `node --test` (natif), un fichier par module. Script : `node --test "tests/**/*.test.js"`
+  (glob explicite requis — `node --test tests/` est interprété comme un chemin de module en Node 22)
+- RNG : injectable en paramètre, défaut `Math.random` (déterminisme des tests ; PRNG mulberry32 côté tests)
 - Nommage : camelCase, identifiants anglais, commentaires français
 - Conception : fonctions pures `(état, action) → nouvel état`, aucun accès DOM/UI
 
@@ -159,21 +166,34 @@ Hors scope immédiat. Documenté ici pour la reprise future. Alimenté par le cl
 ## Modules & API prévue
 
 ### Ordre d'implémentation MVP
-`cards.js` → `scoring.js` → `deck.js` (régulier + Qualif) → `pegging.js` (régulier) →
+`cards.js` ✅ → `scoring.js` ✅ → `deck.js` ✅ → `pegging.js` (régulier) →
 `game-engine.js` (orchestration régulier + Qualif, sans track)
 
 `track.js` : V2 différé — pas dans l'ordre immédiat.
 
 ### Table
 
-| Module | Exports prévus | Dépend de | Statut |
+| Module | Exports (réels si ✅) | Dépend de | Statut |
 |---|---|---|---|
-| cards.js | `Card{rank,suit}`, `cardValue()`, `cardId()` | — | MVP |
-| scoring.js | `scoreShow(hand4, fifth, {isCrib})` → {total, breakdown[]}, `heels(fifth)` | cards | MVP |
-| deck.js | `createDeck()`, `shuffle(deck, rng)`, `dealRegular(deck)`, `dealQualifRound(deck)` (signature par manche ou séquence — au choix), `cut(stock, rng)` | cards | MVP |
+| cards.js | `SUITS`, `RANKS`, `cardValue(card)` → 1..10, `cardId(card)` → "AS"/"TD"/"JH" | — | ✅ Phase 1 |
+| scoring.js | `scoreShow(handCards[4], fifthCard, {isCrib=false})` → `{total, breakdown:[{type,cards,points}]}` (type ∈ `fifteen`\|`pair`\|`run`\|`flush`\|`nobs`) ; `heels(fifthCard)` → 0\|2 | cards | ✅ Phase 1 |
+| deck.js | `createDeck()` → `Card[52]` ordonné ; `shuffle(deck, rng=Math.random)` → nouveau `Card[52]` ; `dealRegular(deck)` → `{hands:{dealer:Card[6],pone:Card[6]}, stock:Card[40]}` ; `cut(stock, rng=Math.random)` → `{starter:Card, stock:Card[n-1]}` ; `dealQualifRound(deck)` → `{visible:Card[4], hidden:Card, stock:Card[n-5]}` ; `allDistinct(cards)` → bool | cards | ✅ Phase 2 |
 | pegging.js | `createPegging(order, hands)`, `legalPlay()`, `playCard()`, `sayGo()`, `isComplete()` | cards | MVP (régulier) |
 | game-engine.js | `createGame({variant, players, rng, options})`, `reduce(state, action)` | cards, scoring, deck, pegging | MVP (régulier + Qualif) |
 | track.js | `createTrack(config)`, `placePegs()`, `legalMoves()`, `applyMove()`, `draft()`, `checkWin()` | config seule | V2 différé |
+
+Notes d'implémentation :
+- Toutes les fonctions `deck.js` sont **pures** : copie systématique, l'entrée n'est jamais mutée.
+- `cut()` sert au starter régulier **et** à la carte universelle Qualif (appliquée au paquet
+  de 32 cartes restant après les 4 manches). Pas de fonction dédiée.
+- `dealRegular` : distribution **alternée** traditionnelle (`pone` = `deck[0,2,4,6,8,10]`,
+  `dealer` = `deck[1,3,5,7,9,11]`), l'appelant passe un paquet déjà mélangé.
+- `dealQualifRound` = **primitive de tirage d'une manche** uniquement. Le placement des 4
+  cartes visibles dans les colonnes (décision du joueur, plafond 4/colonne) et
+  l'orchestration des 4 manches relèvent de `game-engine.js`.
+- `scoreShow` : `handCards` doit contenir exactement 4 cartes (garde-fou → throw) ;
+  les `Card` du `breakdown` sont les références reçues (aucune copie).
+- `breakdown` ordonné : `fifteen → pair → run → flush → nobs`.
 
 Phases game-engine :
 - **régulier** : `deal → discard → cut → pegging → counting → (next deal | gameOver@121)`
@@ -200,6 +220,20 @@ personnalisation pions · multijoueur en ligne · backend (BDD/auth/matchmaking)
 NPC / IA avancée · plusieurs tours & pistes par niveau de difficulté
 
 ---
+
+## Changements v2.1
+- **Phase 1 livrée** : `js/cards.js` (`cardValue`, `cardId`, `SUITS`, `RANKS`) +
+  `js/scoring.js` (`scoreShow`, `heels`) + `tests/scoring.test.js` (12 cas verts).
+- **Phase 2 livrée** : `js/deck.js` (`createDeck`, `shuffle`, `dealRegular`, `cut`,
+  `dealQualifRound`, `allDistinct`) + `tests/deck.test.js` (9 cas verts).
+- `dealQualifRound` tranché : **primitive de tirage par manche** (`{visible[4], hidden, stock}`),
+  placement + orchestration renvoyés à `game-engine.js`.
+- `deck.js` : ajout de `allDistinct(cards)` (contrôle de cohérence, utile aux tests et au futur engine).
+- `package.json` ajouté (`"type": "module"`, script test avec glob explicite).
+- Repo : RULES.md / ARCHITECTURE.md / TODO.md / README.md retirés du versionnement —
+  le sysmap devient la doc de conception unique.
+- Signatures réelles reportées dans la table Modules & API ; statuts ✅ Phase 1 / Phase 2.
+- Points ouverts inchangés (#2 départage égalité Qualif toujours ouvert, sans impact MVP).
 
 ## Changements v2.0
 - **Pivot majeur du mode Qualif** : n'est plus une donne chinoise à 12 joueurs mais un
