@@ -1,6 +1,6 @@
 <!-- SYSMAP -->
 # SYSMAP — RaceCribbage
-Version : 2.1 | 2026-08-29
+Version : 2.2 | 2026-08-29
 Cible : PWA JS pur (HTML/CSS/JS, ES modules), déploiement Netlify — PAS un Cloudflare Worker
 
 ---
@@ -9,7 +9,7 @@ Cible : PWA JS pur (HTML/CSS/JS, ES modules), déploiement Netlify — PAS un Cl
 Modèle de jeu v2 figé (pivot Qualif). Implémentation MVP en cours.
 - Phase 1 ✅ `cards.js` + `scoring.js` (12 tests verts)
 - Phase 2 ✅ `deck.js` (9 tests verts)
-- Phase 3 ⏳ `pegging.js` (régulier) — à venir
+- Phase 3 ✅ `pegging.js` (régulier, plancher 1pt en filet) — 23 tests verts
 - Phase 4 ⏳ `game-engine.js` (orchestration régulier + Qualif)
 
 Le sysmap est la **seule doc de conception du repo** : RULES.md / ARCHITECTURE.md /
@@ -30,10 +30,12 @@ RaceCribbage/
 ├── js/
 │   ├── cards.js     ✅  modèle carte + cardValue + cardId + SUITS/RANKS
 │   ├── scoring.js   ✅  scoreShow + heels
-│   └── deck.js      ✅  createDeck · shuffle · dealRegular · cut · dealQualifRound · allDistinct
+│   ├── deck.js      ✅  createDeck · shuffle · dealRegular · cut · dealQualifRound · allDistinct
+│   └── pegging.js   ✅  createPegging · legalPlays · playCard · sayGo · isComplete
 └── tests/
     ├── scoring.test.js  ✅  12 cas
-    └── deck.test.js     ✅  9 cas
+    ├── deck.test.js     ✅  9 cas
+    └── pegging.test.js  ✅  23 cas
 ```
 
 ### Cible
@@ -42,10 +44,9 @@ MVP (reste à faire) :
 ```
 RaceCribbage/
 ├── js/
-│   ├── pegging.js      séquence de pose régulier · legalPlay · playCard · go · comptage runtime
 │   └── game-engine.js  createGame + reduce(state, action) + phases (régulier + Qualif, sans track)
 ├── tests/
-│   ├── pegging.test.js · game-engine.test.js
+│   ├── game-engine.test.js
 ├── index.html · manifest.json · service-worker.js   (phase UI, plus tard)
 └── css/ · assets/cards/
 ```
@@ -84,6 +85,23 @@ V2 différé (à ajouter plus tard) :
 - Muggins : le moteur signale les points non réclamés (`missed`), sans auto-réclamation
 - Victoire à 121
 
+#### Pegging régulier — comptage runtime (`pegging.js`, RULES.md §1 révisé v5)
+- Cumul des valeurs (As=1 … figures=10), jamais > 31. Alternance stricte, le pone ouvre.
+- Combinaisons réelles complétées par la carte posée :
+  15 = 2 · paire = 2 / brelan = 6 / carré = 12 (cartes de même rang en fin de pile) ·
+  suite = 1 pt/carte pour les K dernières cartes (K ≥ 3) de rangs consécutifs distincts,
+  **quel que soit l'ordre de pose** (7-9-8 = suite de 3).
+- Bonus de fin de séquence : `31 pile` = 2 (remplace le `go`, s'ajoute aux combinaisons) ·
+  `go` = 1 à la dernière carte posée quand l'adversaire ne peut plus répondre.
+- **PIVOT DE RÈGLE (v5)** : **plancher 1 pt/carte en filet** — si une carte ne déclenche
+  *rien* (0 combinaison, pas de `go`, pas de 31), elle rapporte quand même 1 pt.
+  Jamais cumulé avec `go`/`31`/une combinaison — c'est un filet, pas un bonus.
+  `go` (1) et `31 pile` (2) **inchangés**.
+- Remise à 0 après `31 pile` ou double `go` ; le joueur qui n'a **pas** posé la dernière
+  carte ouvre le cumul suivant. Fin de phase quand les 2 mains sont vides.
+- `sayGo` est piloté par l'appelant/UI ; `playCard` ferme automatiquement la séquence
+  dès que le double blocage est certain (aucun `sayGo` inutile requis).
+
 ---
 
 ### Mode Qualif — solitaire à 4 colonnes (MVP)
@@ -119,8 +137,14 @@ Hors scope immédiat. Documenté ici pour la reprise future. Alimenté par le cl
 #### Manche de Course (V2) — répétée jusqu'au bouclage
 1. Donne : 13 mains de 4 + carte universelle (dernière carte distribuée = crib[3])
 2. Pegging : ordre = position sur la piste (1er de la piste joue en 1er).
-   Comptage runtime : 15=2, 31=2, paires, suites, go=1, dernière carte=1, max 31.
-   Points → avancement immédiat du pion.
+   Comptage runtime : 15=2, 31=2, paires, suites, go=1, max 31.
+   **Plancher 1 pt/carte en filet** (aligné RULES.md §4 / pivot régulier v5) : si une carte
+   ne déclenche rien, elle rapporte 1 pt.
+   Points → avancement immédiat du pion. Distinction de nature du point pour le déplacement :
+   - points issus d'une combinaison réelle, de `go` ou de `31 pile` = **points réels** →
+     changement de voie autorisé (dépassement possible) ;
+   - point issu du **plancher pur** (rien d'autre n'a scoré) → avancement **même voie
+     uniquement**, jamais de dépassement.
 3. Comptage des mains dans l'ordre de piste ; crib scoré en dernier par le donneur.
 4. Carte universelle = Valet → effet draft, une seule fois par manche.
    REMPLACE his heels. Sinon : rien.
@@ -166,7 +190,7 @@ Hors scope immédiat. Documenté ici pour la reprise future. Alimenté par le cl
 ## Modules & API prévue
 
 ### Ordre d'implémentation MVP
-`cards.js` ✅ → `scoring.js` ✅ → `deck.js` ✅ → `pegging.js` (régulier) →
+`cards.js` ✅ → `scoring.js` ✅ → `deck.js` ✅ → `pegging.js` ✅ (régulier) →
 `game-engine.js` (orchestration régulier + Qualif, sans track)
 
 `track.js` : V2 différé — pas dans l'ordre immédiat.
@@ -178,7 +202,7 @@ Hors scope immédiat. Documenté ici pour la reprise future. Alimenté par le cl
 | cards.js | `SUITS`, `RANKS`, `cardValue(card)` → 1..10, `cardId(card)` → "AS"/"TD"/"JH" | — | ✅ Phase 1 |
 | scoring.js | `scoreShow(handCards[4], fifthCard, {isCrib=false})` → `{total, breakdown:[{type,cards,points}]}` (type ∈ `fifteen`\|`pair`\|`run`\|`flush`\|`nobs`) ; `heels(fifthCard)` → 0\|2 | cards | ✅ Phase 1 |
 | deck.js | `createDeck()` → `Card[52]` ordonné ; `shuffle(deck, rng=Math.random)` → nouveau `Card[52]` ; `dealRegular(deck)` → `{hands:{dealer:Card[6],pone:Card[6]}, stock:Card[40]}` ; `cut(stock, rng=Math.random)` → `{starter:Card, stock:Card[n-1]}` ; `dealQualifRound(deck)` → `{visible:Card[4], hidden:Card, stock:Card[n-5]}` ; `allDistinct(cards)` → bool | cards | ✅ Phase 2 |
-| pegging.js | `createPegging(order, hands)`, `legalPlay()`, `playCard()`, `sayGo()`, `isComplete()` | cards | MVP (régulier) |
+| pegging.js | `createPegging(order, hands)` → `state` ; `legalPlays(state)` → `Card[]` (joueur courant) ; `playCard(state, card)` → `state` ; `sayGo(state)` → `state` ; `isComplete(state)` → bool. `state = {order, hands, turn, count, pile:[{player,card}], saidGo, scores, log:[PlayEvent], lastEvent, complete}` ; `PlayEvent = {action:'play'\|'go', player, card\|null, count, points, breakdown:[{type,points}]}` ; type ∈ `fifteen`\|`pair`\|`pairRoyal`\|`doublePairRoyal`\|`run`\|`go`\|`thirtyOne`\|`floor` | cards | ✅ Phase 3 |
 | game-engine.js | `createGame({variant, players, rng, options})`, `reduce(state, action)` | cards, scoring, deck, pegging | MVP (régulier + Qualif) |
 | track.js | `createTrack(config)`, `placePegs()`, `legalMoves()`, `applyMove()`, `draft()`, `checkWin()` | config seule | V2 différé |
 
@@ -193,7 +217,15 @@ Notes d'implémentation :
   l'orchestration des 4 manches relèvent de `game-engine.js`.
 - `scoreShow` : `handCards` doit contenir exactement 4 cartes (garde-fou → throw) ;
   les `Card` du `breakdown` sont les références reçues (aucune copie).
-- `breakdown` ordonné : `fifteen → pair → run → flush → nobs`.
+- `breakdown` ordonné (show) : `fifteen → pair → run → flush → nobs`.
+- `pegging.js` : fonctions **pures** `(state, action) → state`, `state` cloné à chaque appel,
+  cartes partagées par référence (comme `scoring.js`). `order[0]` (pone) ouvre ; `turn`
+  implicite (pas de `playerId` en paramètre). `legalPlays` vide ⇒ le joueur courant doit
+  `sayGo`. `breakdown` d'un événement ordonné : `fifteen → pair(Royal) → run → thirtyOne | go | floor`.
+- `pegging.js` plancher : appliqué **seulement** si `combinaisons == 0 && pas 31 && pas go`
+  (jamais additionné). `31 pile` remplace le `go` mais s'ajoute aux combinaisons.
+- `pegging.js` suites : plus grand suffixe (K ≥ 3) de la pile à rangs consécutifs distincts,
+  **ordre de pose ignoré** ; l'As reste bas (pas de bouclage K-A).
 
 Phases game-engine :
 - **régulier** : `deal → discard → cut → pegging → counting → (next deal | gameOver@121)`
@@ -210,6 +242,7 @@ Phases game-engine :
 | 2 | Égalité de score en Qualif → départage | OUVERT — rng, ou position partagée sur la grille ? (n'impacte que la Course V2) |
 | 3 | Mode régulier 1v1 maintenu/abandonné | RÉSOLU — maintenu, MVP |
 | 4 | Phasage d'implémentation | REFORMULÉ — MVP = régulier + Qualif uniquement (`scoring` → `deck` → `pegging` → `game-engine`). Track + Course = hors scope immédiat, V2 |
+| 5 | Plancher pegging (pivot v5) | RÉSOLU — 1 pt/carte en filet uniquement (0 combi, pas de `go`, pas de 31). `go`=1 / `31 pile`=2 inchangés. Régulier livré ; Course V2 hérite du plancher, avec règle de déplacement dédiée (plancher pur = même voie) |
 
 ---
 
@@ -220,6 +253,23 @@ personnalisation pions · multijoueur en ligne · backend (BDD/auth/matchmaking)
 NPC / IA avancée · plusieurs tours & pistes par niveau de difficulté
 
 ---
+
+## Changements v2.2
+- **Phase 3 livrée** : `js/pegging.js` (`createPegging`, `legalPlays`, `playCard`, `sayGo`,
+  `isComplete`) + `tests/pegging.test.js` (23 cas verts). Mode régulier uniquement, aucune
+  notion de piste/voie/pion.
+- **Pivot de règle pegging (RULES.md §1 révisé v5)** : **plancher 1 pt/carte en filet** —
+  une carte qui ne déclenche rien (0 combinaison, pas de `go`, pas de 31) rapporte quand
+  même 1 pt. Jamais cumulé. `go` = 1 (dernière carte, adversaire ne peut plus répondre) et
+  `31 pile` = 2 (remplace le `go`, s'ajoute aux combinaisons) **inchangés**.
+- Suites de pegging : comptées quel que soit l'ordre de pose (7-9-8 = suite de 3).
+- API `pegging.js` : fonctions pures `(state, action) → state`, `turn` implicite, `sayGo`
+  piloté par l'UI ; `playCard` ferme la séquence automatiquement quand le double blocage
+  est certain (pas de `sayGo` inutile). Événements journalisés dans `state.log` / `state.lastEvent`.
+- **Course V2 (doc seulement, différé)** : la phase pegging hérite du plancher. Nature du
+  point tranchée pour le déplacement — combinaison réelle / `go` / `31 pile` = points réels
+  (changement de voie autorisé) ; **plancher pur = avancement même voie uniquement**.
+- Point ouvert #5 ajouté (plancher pegging) → RÉSOLU.
 
 ## Changements v2.1
 - **Phase 1 livrée** : `js/cards.js` (`cardValue`, `cardId`, `SUITS`, `RANKS`) +
