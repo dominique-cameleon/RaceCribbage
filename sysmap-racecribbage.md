@@ -1,6 +1,6 @@
 <!-- SYSMAP -->
 # SYSMAP — RaceCribbage
-Version : 2.3 | 2026-08-29
+Version : 2.4 | 2026-08-30
 Cible : PWA JS pur (HTML/CSS/JS, ES modules), déploiement Netlify — PAS un Cloudflare Worker
 
 ---
@@ -28,6 +28,7 @@ V2 différé : La Course à 12 joueurs (piste 3 voies), alimentée par le score 
 ```
 RaceCribbage/
 ├── package.json              "type": "module" · script test : node --test "tests/**/*.test.js"
+├── .gitattributes            *.bat / *.cmd forcés en eol=crlf
 ├── sysmap-racecribbage.md    seule doc de conception
 ├── js/
 │   ├── cards.js     ✅  modèle carte + cardValue + cardId + SUITS/RANKS
@@ -73,6 +74,10 @@ Ne fait pas partie du scope MVP ; à ne pas relier à `index.html` ou `game-engi
 - Visualisation de la **piste Course V2** : 3 voies décalées (quinconce, voie centre à `HOLE_SP/2`),
   roster jusqu'à 12 pions, boutons *point réel* (changement de voie autorisé) / *point plancher*
   (même voie seulement) — sert à éprouver visuellement les règles de déplacement V2.
+- Dépassement diagonal (*point réel*, voie directe bloquée) via `diagonalTargets(lane, index)` :
+  depuis `top`/`bottom` → `mid` **même index** (déjà un demi-pas devant) ; depuis `mid` →
+  `top` ou `bottom` à **`index+1`** (jamais le même index — ce serait un recul vu la géométrie).
+  Cible retenue = première libre et dans la piste ; sinon aucun mouvement, aucun score.
 - Panel « Randomiser une main » branché sur le **vrai moteur** :
   `import ../js/deck.js` (`createDeck`, `shuffle`, `cut`) + `import ../js/scoring.js` (`scoreShow`).
   Tirage : `shuffle(createDeck())` → 4 premières = main → `cut(reste).starter` = carte universelle
@@ -82,8 +87,12 @@ Ne fait pas partie du scope MVP ; à ne pas relier à `index.html` ou `game-engi
   la piste reste fonctionnelle même si les modules ne chargent pas.
 
 ### `tools/ouvrir-prototype.bat`
-- Lanceur Windows (double-clic) : `cd` racine repo → `py -m http.server 8000` dans une fenêtre
-  dédiée (`cmd /k`) → attend 1 s → ouvre `http://localhost:8000/tools/course-prototype.html`.
+- Lanceur Windows (double-clic) : `cd` racine repo → `py -m http.server 8000 --bind 127.0.0.1`
+  dans une fenêtre dédiée (`cmd /k`) → **sonde** le serveur (`Invoke-WebRequest` en boucle,
+  max ~15 s) → ouvre `http://127.0.0.1:8000/tools/course-prototype.html`.
+- `--bind 127.0.0.1` + URL en `127.0.0.1` (pas `localhost`) : évite `localhost → ::1` (IPv6)
+  → `ERR_CONNECTION_REFUSED`. La sonde évite la course de démarrage (Python lent à froid).
+- Fins de ligne **CRLF** obligatoires (cf. `.gitattributes`).
 - Fermer la fenêtre serveur = arrêter le serveur (pas de process fantôme).
 - Port 8000 occupé : l'erreur s'affiche telle quelle, aucune gestion.
 
@@ -283,6 +292,19 @@ personnalisation pions · multijoueur en ligne · backend (BDD/auth/matchmaking)
 NPC / IA avancée · plusieurs tours & pistes par niveau de difficulté
 
 ---
+
+## Changements v2.4
+- **`tools/course-prototype.html` — fix règle de déplacement** : le dépassement diagonal
+  depuis la voie centre gardait `index` inchangé → recul visuel (géométrie : `mid(i)` est
+  un demi-pas devant `top(i)`/`bottom(i)`). `adjacentLane()` remplacée par
+  `diagonalTargets(lane, index)` : `mid → top/bottom` à **`index+1`** ; `top/bottom → mid`
+  même index (inchangé). Point plancher non concerné. Aucune nouvelle API ni module.
+- **`tools/ouvrir-prototype.bat` — réécrit** : `--bind 127.0.0.1` + URL `127.0.0.1`
+  (corrige `ERR_CONNECTION_REFUSED` dû à `localhost → ::1`) · sonde de disponibilité du
+  serveur avant d'ouvrir le navigateur (au lieu d'un `timeout /t 1`) · fins de ligne CRLF.
+- **Nouveau `.gitattributes`** : `*.bat` / `*.cmd` en `eol=crlf` (un batch LF peut être mal
+  interprété par `cmd.exe` au checkout selon la config `core.autocrlf`).
+- Aucun changement de modèle de jeu, de règle MVP, ni de module `js/`.
 
 ## Changements v2.3
 - **Phase 3 commitée** (`7d0572e`) : `js/pegging.js` + `tests/pegging.test.js` + sysmap v2.2.

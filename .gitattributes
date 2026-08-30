@@ -1,0 +1,4 @@
+# Les scripts batch Windows doivent rester en CRLF, sinon cmd.exe peut mal
+# interpreter certaines lignes (start, %~dp0, cmd /k...).
+*.bat text eol=crlf
+*.cmd text eol=crlf

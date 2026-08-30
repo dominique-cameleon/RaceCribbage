@@ -168,17 +168,15 @@ const LANE_Y={top:30,mid:100,bottom:170};
 
 function holeX(lane,i){return X0+i*HOLE_SP+(lane==='mid'?HOLE_SP/2:0);}
 
-function adjacentLane(lane,pegsAtIndex){
-  // mid is adjacent to both top and bottom; top/bottom only adjacent to mid
+// Cibles diagonales VERS L'AVANT selon la voie de depart.
+// Geometrie (holeX) : mid(i) est un demi-pas devant top(i)/bottom(i).
+//   - depuis top/bottom : mid au MEME index (deja un demi-pas plus loin)
+//   - depuis mid        : top OU bottom a index+1 (jamais le meme index -> ce serait un recul)
+function diagonalTargets(lane,index){
   if(lane==='mid'){
-    const topFree=!pegsAtIndex.some(p=>p.lane==='top');
-    const bottomFree=!pegsAtIndex.some(p=>p.lane==='bottom');
-    if(topFree) return 'top';
-    if(bottomFree) return 'bottom';
-    return null;
+    return [{lane:'top',index:index+1},{lane:'bottom',index:index+1}];
   }
-  const midFree=!pegsAtIndex.some(p=>p.lane==='mid');
-  return midFree ? 'mid' : null;
+  return [{lane:'mid',index:index}];
 }
 
 function renderTrack(){
@@ -286,13 +284,16 @@ function movePeg(kind){
       peg.index=nextIndex;
       msg.textContent='J'+peg.id+' — point réel : avance dans sa voie.';
     } else {
-      const pegsAtNext=pegs.filter(p=>p!==peg && p.index===peg.index);
-      const alt=adjacentLane(peg.lane,pegsAtNext);
-      if(alt){
-        peg.lane=alt;
-        msg.textContent='J'+peg.id+' — point réel : voie bloquée devant, dépassement diagonal vers '+LANE_LABEL[alt]+'.';
+      const targets=diagonalTargets(peg.lane,peg.index).filter(tg=>
+        tg.index>=0 && tg.index<=trackLength-1 && occupants(tg.index,tg.lane).length===0
+      );
+      if(targets.length){
+        const tg=targets[0];
+        peg.lane=tg.lane;
+        peg.index=tg.index;
+        msg.textContent='J'+peg.id+' — point réel : voie bloquée devant, dépassement diagonal vers '+LANE_LABEL[tg.lane]+'.';
       } else {
-        msg.textContent='J'+peg.id+' — point réel : voie directe ET voie adjacente bloquées, aucun trou libre.';
+        msg.textContent='J'+peg.id+' — point réel : voie directe ET voie(s) diagonale(s) bloquées, aucun trou libre.';
         render(); return;
       }
     }
