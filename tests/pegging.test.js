@@ -384,3 +384,219 @@ test('sayGo intermediaire : l adversaire continue seul avant la fermeture', () =
   s = play(s, '9C'); // 9  derniere carte
   assert.equal(isComplete(s), true);
 });
+
+// --- Mode Course : N joueurs (2 a 12) ---------------------------------
+
+test('createPegging : accepte de 2 a 12 joueurs, rejette hors bornes / doublons / mode inconnu', () => {
+  const build = (n) => {
+    const order = Array.from({ length: n }, (_, i) => `J${i}`);
+    const hands = Object.fromEntries(
+      order.map((id, i) => [id, [c('AH'), c('2H'), c('3H'), c('4H')]]),
+    );
+    return { order, hands };
+  };
+
+  for (const n of [2, 3, 7, 12]) {
+    const { order, hands } = build(n);
+    const s = createPegging(order, hands, { mode: 'course' });
+    assert.equal(s.order.length, n);
+    assert.equal(s.mode, 'course');
+    assert.equal(s.turn, order[0]);
+    assert.deepEqual(Object.keys(s.scores).sort(), [...order].sort());
+  }
+
+  const one = build(1);
+  assert.throws(() => createPegging(one.order, one.hands, { mode: 'course' }));
+  const thirteen = build(13);
+  assert.throws(() => createPegging(thirteen.order, thirteen.hands, { mode: 'course' }));
+  assert.throws(() =>
+    createPegging(['A', 'A', 'B'], { A: [c('AH')], B: [c('2H')] }, { mode: 'course' }),
+  );
+  const four = build(4);
+  assert.throws(() => createPegging(four.order, four.hands, { mode: 'zorglub' }));
+});
+
+test('mode par defaut = regular ; playCard expose pointKind', () => {
+  let s = createPegging(['P', 'D'], {
+    P: [c('4H'), c('6C')],
+    D: [c('5S'), c('9D')],
+  });
+  assert.equal(s.mode, 'regular');
+
+  s = play(s, '4H'); // 4  rien -> plancher
+  assert.equal(s.lastEvent.pointKind, 'floor');
+
+  s = play(s, '5S'); // 9  rien -> plancher
+  assert.equal(s.lastEvent.pointKind, 'floor');
+
+  s = play(s, '6C'); // 15  15 + suite 4-5-6 -> point reel
+  assert.equal(s.lastEvent.pointKind, 'real');
+});
+
+test('course : relance apres "31 pile" = joueur suivant dans l ordre initial', () => {
+  const order = ['A', 'B', 'C', 'D'];
+  const hands = {
+    A: [c('3S'), c('2S'), c('4S'), c('5S')],
+    B: [c('8S'), c('2D'), c('4D'), c('5D')],
+    C: [c('KS'), c('2H'), c('4H'), c('5H')],
+    D: [c('TS'), c('2C'), c('4C'), c('5C')],
+  };
+  let s = createPegging(order, hands, { mode: 'course' });
+
+  s = play(s, '3S'); // A  3
+  s = play(s, '8S'); // B  11
+  s = play(s, 'KS'); // C  21
+  s = play(s, 'TS'); // D  31  -> "31 pile", D (order[3]) ferme
+
+  assert.deepEqual(types(s.lastEvent), ['thirtyOne']);
+  assert.equal(s.lastEvent.pointKind, 'real');
+  assert.equal(s.count, 0);
+  assert.equal(s.turn, 'A'); // order[(3 + 1) % 4] = order[0]
+});
+
+test('course : fermeture "go" -> relance au joueur suivant dans l ordre initial', () => {
+  const order = ['A', 'B', 'C', 'D'];
+  const hands = {
+    A: [c('TS'), c('KS'), c('QS'), c('JS')],
+    B: [c('9H'), c('KD'), c('QD'), c('JD')],
+    C: [c('3S'), c('KC'), c('QC'), c('JC')],
+    D: [c('KH'), c('QH'), c('JH'), c('TH')],
+  };
+  let s = createPegging(order, hands, { mode: 'course' });
+
+  s = play(s, 'TS'); // A  10  plancher
+  s = play(s, '9H'); // B  19  plancher
+  // C pose 3S -> 22 : plus personne ne peut alimenter (A/B/C/D n ont que des
+  // figures) -> fermeture auto, 1 pt "go" a C.
+  s = play(s, '3S');
+
+  assert.equal(s.lastEvent.action, 'play');
+  assert.equal(s.lastEvent.player, 'C');
+  assert.deepEqual(types(s.lastEvent), ['go']);
+  assert.equal(s.lastEvent.pointKind, 'real');
+  assert.equal(s.count, 0);
+  assert.equal(s.turn, 'D'); // order[(2 + 1) % 4] = order[3]
+});
+
+test('course 12 joueurs : joueur fini tot marque un plancher auto a chaque tour, a travers les remises a 0', () => {
+  // 48 cartes distinctes : 4 couleurs x rangs 1..12. Distribution : le joueur j
+  // recoit les 4 cartes du rang j+1 (un rang par joueur, aucune paire fortuite
+  // possible entre deux joueurs). P0 tient quatre As (valeur 1) : il finit tot.
+  const SUITS = ['S', 'H', 'D', 'C'];
+  const order = Array.from({ length: 12 }, (_, j) => `P${j}`);
+  const hands = Object.fromEntries(
+    order.map((id, j) => [id, SUITS.map((su) => ({ rank: j + 1, suit: su }))]),
+  );
+
+  let s = createPegging(order, hands, { mode: 'course' });
+
+  // Pilotage glouton : jouer la 1re carte legale, sinon dire "go".
+  let guard = 0;
+  while (!isComplete(s) && guard++ < 5000) {
+    const legal = legalPlays(s);
+    s = legal.length > 0 ? playCard(s, legal[0]) : sayGo(s);
+  }
+
+  assert.equal(isComplete(s), true, 'la manche doit se terminer');
+  for (const id of order) {
+    assert.equal(s.hands[id].length, 0, `${id} doit avoir joue ses 4 cartes`);
+  }
+
+  const plays = s.log.filter((e) => e.action === 'play' && e.card);
+  assert.equal(plays.length, 48, '48 cartes reellement posees');
+  for (const e of plays) {
+    assert.ok(['real', 'floor'].includes(e.pointKind));
+  }
+
+  // Coherence comptable : somme des scores = somme des points de tous les evenements.
+  const totalScores = Object.values(s.scores).reduce((a, b) => a + b, 0);
+  const totalEvents = s.log.reduce((a, e) => a + e.points, 0);
+  assert.equal(totalScores, totalEvents);
+
+  // Relance : pour la 1re fermeture (personne n a encore fini), la carte suivante
+  // est posee par le joueur suivant dans l ordre initial.
+  const firstClose = s.log.findIndex((e) =>
+    e.breakdown.some((b) => b.type === 'thirtyOne' || b.type === 'go'),
+  );
+  assert.ok(firstClose >= 0);
+  const closer = s.log[firstClose].player;
+  const expectedOpener = order[(order.indexOf(closer) + 1) % 12];
+  const nextPlay = s.log
+    .slice(firstClose + 1)
+    .find((e) => e.action === 'play' && e.card);
+  assert.equal(nextPlay.player, expectedOpener);
+
+  // P0 finit tot puis marque des planchers auto...
+  const p0Auto = s.log
+    .map((e, i) => (e.action === 'autoFloor' && e.player === 'P0' ? i : -1))
+    .filter((i) => i >= 0);
+  assert.ok(p0Auto.length >= 2, 'P0 doit marquer plusieurs planchers auto');
+
+  // ... et au moins une remise a 0 est encadree par deux planchers auto de P0
+  // -> P0 continue de marquer a travers une fermeture "31 pile" / "go".
+  const closes = s.log
+    .map((e, i) =>
+      e.breakdown.some((b) => b.type === 'thirtyOne' || b.type === 'go') ? i : -1,
+    )
+    .filter((i) => i >= 0);
+  const straddles = closes.some(
+    (k) => p0Auto.some((a) => a < k) && p0Auto.some((a) => a > k),
+  );
+  assert.ok(straddles, 'P0 marque un plancher auto avant ET apres une remise a 0');
+
+  // Les evenements passifs autoFloor ne polluent pas lastEvent apres une pose.
+  let s2 = createPegging(['X', 'Y', 'Z'], {
+    X: [c('AS'), c('2S')],
+    Y: [c('KH'), c('QH')],
+    Z: [c('KD'), c('QD')],
+  }, { mode: 'course' });
+  s2 = playCard(s2, s2.hands.X.find((cd) => cardId(cd) === 'AS')); // X 1
+  assert.equal(s2.lastEvent.action, 'play');
+  assert.equal(s2.lastEvent.player, 'X');
+});
+
+test('course : un joueur fini reste dans la rotation (contraste avec regular)', () => {
+  // 2 joueurs. A tient 4 valeurs 1 (jamais bloque), B 4 valeurs 10 (bloque des
+  // que le cumul depasse 21). B finit par se bloquer -> A pose 2 cartes de
+  // suite et vide sa main pendant que B a encore 2 cartes. En mode course, la
+  // rotation passe alors sur A a chaque pose de B -> plancher auto ; en regular,
+  // A est simplement saute.
+  const order = ['A', 'B'];
+  const hands = {
+    A: [c('AS'), c('AH'), c('AD'), c('AC')],
+    B: [c('KH'), c('KD'), c('KC'), c('KS')],
+  };
+  let sCourse = createPegging(order, hands, { mode: 'course' });
+  let sReg = createPegging(order, hands); // regular
+
+  const runGreedy = (s) => {
+    let g = 0;
+    while (!isComplete(s) && g++ < 500) {
+      const legal = legalPlays(s);
+      s = legal.length > 0 ? playCard(s, legal[0]) : sayGo(s);
+    }
+    return s;
+  };
+
+  sCourse = runGreedy(sCourse);
+  sReg = runGreedy(sReg);
+
+  assert.equal(isComplete(sCourse), true);
+  assert.equal(isComplete(sReg), true);
+
+  // En course, A a marque des planchers auto apres avoir vide sa main.
+  const aAuto = sCourse.log.filter(
+    (e) => e.action === 'autoFloor' && e.player === 'A',
+  );
+  assert.ok(aAuto.length >= 1, 'A marque au moins un plancher auto en mode course');
+
+  // En regular, aucun evenement autoFloor n existe.
+  assert.equal(
+    sReg.log.filter((e) => e.action === 'autoFloor').length,
+    0,
+  );
+
+  // Le score course de A est strictement superieur a son score regular
+  // (memes poses, plus les planchers auto).
+  assert.ok(sCourse.scores.A > sReg.scores.A);
+});

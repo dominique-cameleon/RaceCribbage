@@ -1,43 +1,71 @@
-// Phase de pose (le "pegging") du mode regulier 2 joueurs.
+// Phase de pose (le "pegging") pour RaceCribbage.
 //
-// Regles (voir sysmap-racecribbage.md, section "Mode regulier 1v1" et le pivot
-// de regle v2.2) :
-//   - pose alternee, cumul des valeurs (As=1 ... figures=10), jamais > 31 ;
-//   - un joueur sans coup legal dit "go" (sayGo) ; l'autre continue tant qu'il peut ;
-//   - points d'une carte posee = combinaisons reelles completees :
-//       15    -> 2
-//       paire -> 2, brelan -> 6, carre -> 12  (cartes de meme rang en fin de pile)
+// Deux modes, choisis a la creation via `options.mode` :
+//
+//   - 'regular' (defaut) : cribbage 1v1 classique. Comportement historique
+//     inchange. Prevu pour 2 joueurs, pose alternee.
+//
+//   - 'course' : pegging de la Course RaceCribbage, 2 a 12 joueurs. Meme
+//     comptage que 'regular'. En plus : un joueur ayant epuise sa main reste
+//     dans la rotation et marque automatiquement 1 point plancher a chaque
+//     fois que le tour repasse sur lui (evenement `autoFloor`), jusqu'a ce que
+//     TOUTES les mains soient vides -- y compris a travers plusieurs remises a
+//     0 sur "31 pile" ou "go".
+//
+// Regles de comptage, communes aux deux modes (voir sysmap-racecribbage.md
+// section 3, et le pivot v2.2) :
+//   - cumul des valeurs (As=1 ... figures=10), jamais > 31 ;
+//   - un joueur sans coup legal dit "go" (sayGo) ;
+//   - points de la carte posee = combinaisons reelles completees :
+//       15 -> 2 ; paire -> 2 / brelan -> 6 / carre -> 12 ;
 //       suite -> 1 pt/carte pour les K dernieres cartes (K >= 3) de rangs
 //                consecutifs distincts, quel que soit l'ordre de pose ;
 //     + bonus de fin de sequence :
-//       "31 pile" -> 2  (remplace le "go", s'ajoute aux combinaisons)
-//       "go"      -> 1  a la derniere carte posee quand l'adversaire ne peut
-//                       plus repondre et que le joueur ne peut plus continuer ;
+//       "31 pile" -> 2 (remplace le "go", s'ajoute aux combinaisons) ;
+//       "go"      -> 1 a la derniere carte posee quand plus personne ne peut
+//                    alimenter le cumul ;
 //     + PLANCHER : si une carte ne declenche RIEN (0 combinaison, pas de "go",
 //       pas de 31), elle rapporte quand meme 1 pt (filet, jamais cumule).
-//   - remise a 0 du cumul apres un "31 pile" ou un double "go" ; le joueur qui
-//     n'a PAS pose la derniere carte ouvre le cumul suivant ;
-//   - fin de la phase quand les 2 mains sont vides (4 cartes chacune au regulier).
+//   - relance apres "go" ou "31 pile" (les DEUX modes) : le prochain a ouvrir
+//     le cumul a 0 est le joueur SUIVANT DANS L'ORDRE INITIAL apres celui qui
+//     a ferme la sequence -- index (i + 1) % N. Les joueurs sans carte sont
+//     sautes (en 'course' ils marquent leur plancher auto au passage), donc la
+//     reouverture revient toujours a un joueur qui a effectivement une carte.
+//     A 2 joueurs c'est l'autre joueur : 'regular' identique a l'historique.
+//   - fin de la phase quand toutes les mains sont vides.
+//
+// `state.lastEvent` = dernier evenement issu d'une action de l'appelant
+// ('play' ou 'go'). Les evenements passifs 'autoFloor' du mode Course sont
+// ajoutes a `state.log` mais ne deviennent jamais `lastEvent`, pour que
+// l'appelant retrouve toujours sur `lastEvent` le resultat de la carte qu'il
+// vient de poser (dont `pointKind`).
+//
+// L'ORDRE des joueurs est fourni par l'appelant (position sur la piste, ou
+// classement de qualification pour la 1re manche). pegging.js ne le calcule
+// jamais.
 //
 // Module pur : chaque fonction copie l'etat recu et ne le mute jamais. Aucun
-// RNG, aucun acces DOM. La representation des cartes suit cards.js (les objets
-// Card places dans `pile` / `log` sont les references d'origine).
+// RNG, aucun acces DOM. Les objets Card de `pile` / `log` sont les references
+// d'origine.
 
 import { cardValue } from './cards.js';
 
 /**
+ * @typedef {'regular' | 'course'} PeggingMode
  * @typedef {{ rank: number, suit: string }} Card
  * @typedef {{ type: string, points: number }} ScoreEntry
  * @typedef {{
- *   action: 'play' | 'go',
+ *   action: 'play' | 'go' | 'autoFloor',
  *   player: string,
  *   card: Card | null,
  *   count: number,
  *   points: number,
- *   breakdown: ScoreEntry[]
+ *   breakdown: ScoreEntry[],
+ *   pointKind: 'real' | 'floor' | null
  * }} PlayEvent
  * @typedef {{
  *   order: string[],
+ *   mode: PeggingMode,
  *   hands: Record<string, Card[]>,
  *   turn: string,
  *   count: number,
@@ -50,35 +78,56 @@ import { cardValue } from './cards.js';
  * }} PeggingState
  */
 
+const MODES = ['regular', 'course'];
+const MIN_PLAYERS = 2;
+const MAX_PLAYERS = 12;
+
 /**
  * Cree l'etat initial d'une phase de pose.
  *
- * @param {[string, string]} order  2 identifiants distincts ; `order[0]` (le pone) ouvre
+ * @param {string[]} order  2 a 12 identifiants distincts ; `order[0]` ouvre
  * @param {Record<string, Card[]>} hands  une main par identifiant, meme taille non nulle
+ * @param {{ mode?: PeggingMode }} [options]  `mode` : 'regular' (defaut) ou 'course'
  * @returns {PeggingState}
  */
-export function createPegging(order, hands) {
-  if (!Array.isArray(order) || order.length !== 2 || order[0] === order[1]) {
-    throw new Error('createPegging : order doit lister 2 joueurs distincts');
+export function createPegging(order, hands, options = {}) {
+  if (
+    !Array.isArray(order) ||
+    order.length < MIN_PLAYERS ||
+    order.length > MAX_PLAYERS
+  ) {
+    throw new Error(
+      `createPegging : order doit lister de ${MIN_PLAYERS} a ${MAX_PLAYERS} joueurs`,
+    );
   }
-  const [first, second] = order;
+  if (new Set(order).size !== order.length) {
+    throw new Error('createPegging : les identifiants de joueurs doivent etre distincts');
+  }
+
+  const mode = options.mode ?? 'regular';
+  if (!MODES.includes(mode)) {
+    throw new Error(`createPegging : mode inconnu "${mode}"`);
+  }
+
   for (const id of order) {
     if (!Array.isArray(hands?.[id])) {
       throw new Error(`createPegging : main manquante ou invalide pour "${id}"`);
     }
   }
-  if (hands[first].length === 0 || hands[first].length !== hands[second].length) {
-    throw new Error('createPegging : les 2 mains doivent avoir la meme taille non nulle');
+  const handSize = hands[order[0]].length;
+  if (handSize === 0 || order.some((id) => hands[id].length !== handSize)) {
+    throw new Error('createPegging : toutes les mains doivent avoir la meme taille non nulle');
   }
 
   return {
-    order: [first, second],
-    hands: { [first]: [...hands[first]], [second]: [...hands[second]] },
-    turn: first,
+    order: [...order],
+    mode,
+    hands: Object.fromEntries(order.map((id) => [id, [...hands[id]]])),
+    turn: order[0],
     count: 0,
     pile: [],
     saidGo: [],
-    scores: { [first]: 0, [second]: 0 },
+    scores: Object.fromEntries(order.map((id) => [id, 0])),
     log: [],
     lastEvent: null,
     complete: false,
@@ -103,7 +152,8 @@ export function legalPlays(state) {
  *
  * @param {PeggingState} state
  * @param {Card} card  reference exacte d'une carte de la main du joueur courant
- * @returns {PeggingState} nouvel etat
+ * @returns {PeggingState} nouvel etat ; `lastEvent.pointKind` vaut 'real'
+ *   (combinaison / go / 31), 'floor' (plancher pur) ou null (aucun point).
  */
 export function playCard(state, card) {
   if (state.complete) {
@@ -126,37 +176,40 @@ export function playCard(state, card) {
 
   const breakdown = scoreCombos(next.pile, next.count);
   const combos = totalPoints(breakdown);
-  const opp = opponentOf(next, player);
-  const playerStuck = playableCards(next.hands[player], next.count).length === 0;
 
   let closed = false;
+  let pointKind;
   if (next.count === 31) {
     breakdown.push({ type: 'thirtyOne', points: 2 });
     closed = true;
-  } else if (cannotPlay(next, opp) && playerStuck) {
-    // Double blocage deja certain : on ferme sans exiger de sayGo cote UI.
+    pointKind = 'real';
+  } else if (countIsDead(next)) {
+    // Plus personne ne peut alimenter le cumul : on ferme sans exiger de sayGo.
     breakdown.push({ type: 'go', points: 1 });
     closed = true;
+    pointKind = 'real';
   } else if (combos === 0) {
     breakdown.push({ type: 'floor', points: 1 });
+    pointKind = 'floor';
+  } else {
+    pointKind = 'real';
   }
 
   const points = totalPoints(breakdown);
   next.scores[player] += points;
-  recordEvent(next, { action: 'play', player, card, count: next.count, points, breakdown });
+  recordEvent(next, {
+    action: 'play',
+    player,
+    card,
+    count: next.count,
+    points,
+    breakdown,
+    pointKind,
+  });
 
-  if (closed) {
-    resetCount(next);
-    openNextCount(next, opp);
-  } else if (next.saidGo.includes(opp) || next.hands[opp].length === 0) {
-    // L'adversaire a deja dit "go" ou n'a plus de cartes : le joueur continue.
-    next.turn = player;
-  } else {
-    // Alternance stricte : l'adversaire jouera, ou annoncera "go".
-    next.turn = opp;
-  }
-
-  next.complete = bothHandsEmpty(next);
+  if (closed) resetCount(next);
+  advanceTurnFrom(next, player);
+  next.complete = next.complete || allHandsEmpty(next);
   return next;
 }
 
@@ -182,11 +235,10 @@ export function sayGo(state) {
   if (!next.saidGo.includes(player)) {
     next.saidGo = next.saidGo.concat(player);
   }
-  const opp = opponentOf(next, player);
 
-  if (cannotPlay(next, opp)) {
-    // Filet : l'adversaire ne peut pas repondre non plus -> la sequence se ferme
-    // ici (en pratique playCard ferme deja des que le double blocage est certain).
+  if (countIsDead(next)) {
+    // Plus personne ne peut repondre : la sequence se ferme, 1 pt "go" a la
+    // derniere carte posee.
     const lastPlayer = next.pile[next.pile.length - 1].player;
     next.scores[lastPlayer] += 1;
     recordEvent(next, {
@@ -196,9 +248,10 @@ export function sayGo(state) {
       count: next.count,
       points: 1,
       breakdown: [{ type: 'go', points: 1 }],
+      pointKind: 'real',
     });
     resetCount(next);
-    openNextCount(next, opponentOf(next, lastPlayer));
+    advanceTurnFrom(next, lastPlayer);
   } else {
     recordEvent(next, {
       action: 'go',
@@ -207,17 +260,18 @@ export function sayGo(state) {
       count: next.count,
       points: 0,
       breakdown: [],
+      pointKind: null,
     });
-    next.turn = opp;
+    advanceTurnFrom(next, player);
   }
 
-  next.complete = bothHandsEmpty(next);
+  next.complete = next.complete || allHandsEmpty(next);
   return next;
 }
 
 /**
  * @param {PeggingState} state
- * @returns {boolean} vrai quand les 2 mains sont vides
+ * @returns {boolean} vrai quand toutes les mains sont vides
  */
 export function isComplete(state) {
   return state.complete;
@@ -266,15 +320,11 @@ function scoreCombos(pile, count) {
 
 // --- Utilitaires ---------------------------------------------------------
 
-function opponentOf(state, id) {
-  return state.order[0] === id ? state.order[1] : state.order[0];
-}
-
 function playableCards(hand, count) {
   return hand.filter((card) => count + cardValue(card) <= 31);
 }
 
-/** Le joueur `id` ne peut pas poser : main vide, "go" deja annonce, ou aucun coup legal. */
+/** `id` ne peut pas alimenter le cumul : main vide, "go" deja dit, ou aucun coup legal. */
 function cannotPlay(state, id) {
   return (
     state.hands[id].length === 0 ||
@@ -283,7 +333,12 @@ function cannotPlay(state, id) {
   );
 }
 
-function bothHandsEmpty(state) {
+/** Plus aucun joueur ne peut alimenter le cumul courant (et au moins une carte est posee). */
+function countIsDead(state) {
+  return state.pile.length > 0 && state.order.every((id) => cannotPlay(state, id));
+}
+
+function allHandsEmpty(state) {
   return state.order.every((id) => state.hands[id].length === 0);
 }
 
@@ -297,12 +352,54 @@ function resetCount(state) {
   state.saidGo = [];
 }
 
-/** Assigne le tour apres une remise a 0 : `leader` ouvre s'il lui reste des cartes. */
-function openNextCount(state, leader) {
-  const other = opponentOf(state, leader);
-  if (state.hands[leader].length > 0) state.turn = leader;
-  else if (state.hands[other].length > 0) state.turn = other;
-  else state.turn = leader; // les 2 mains vides : la phase est terminee
+/** Mode Course : un joueur sans carte marque 1 point plancher automatique (evenement passif). */
+function autoFloor(state, id) {
+  state.scores[id] += 1;
+  state.log = state.log.concat({
+    action: 'autoFloor',
+    player: id,
+    card: null,
+    count: state.count,
+    points: 1,
+    breakdown: [{ type: 'floor', points: 1 }],
+    pointKind: 'floor',
+  });
+}
+
+/**
+ * Place `state.turn` sur le prochain joueur actionnable a partir de `fromId`
+ * (exclu), dans l'ordre initial et cycliquement. Un joueur actionnable a
+ * encore des cartes et n'a pas dit "go" pour ce cumul.
+ *
+ * Les joueurs sans carte croises en chemin sont sautes ; en mode 'course' ils
+ * marquent 1 plancher automatique au passage, tant que la manche n'est pas
+ * finie. Sert aussi bien a l'alternance normale qu'a la reouverture du cumul
+ * apres une fermeture (jamais de reouverture par un joueur sans carte).
+ *
+ * Si plus aucune main n'a de carte, la phase est marquee terminee.
+ *
+ * @param {PeggingState} state
+ * @param {string} fromId
+ */
+function advanceTurnFrom(state, fromId) {
+  const n = state.order.length;
+  const start = state.order.indexOf(fromId);
+  for (let step = 1; step <= n; step++) {
+    const id = state.order[(start + step) % n];
+    if (state.hands[id].length === 0) {
+      if (state.mode === 'course' && !allHandsEmpty(state)) autoFloor(state, id);
+      continue;
+    }
+    if (state.saidGo.includes(id)) continue;
+    state.turn = id;
+    return;
+  }
+  if (allHandsEmpty(state)) {
+    state.complete = true;
+    return;
+  }
+  // Tous les autres joueurs sont bloques ou ont dit "go" : `fromId` reprend la main.
+  state.turn = fromId;
 }
 
 function recordEvent(state, event) {
@@ -313,6 +410,7 @@ function recordEvent(state, event) {
 function cloneState(state) {
   return {
     order: [...state.order],
+    mode: state.mode,
     hands: Object.fromEntries(state.order.map((id) => [id, [...state.hands[id]]])),
     turn: state.turn,
     count: state.count,
