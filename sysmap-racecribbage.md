@@ -1,6 +1,6 @@
 <!-- SYSMAP -->
 # SYSMAP — RaceCribbage
-Version : 2.5 | 2026-08-30
+Version : 2.6 | 2026-09-02
 Cible : PWA JS pur (HTML/CSS/JS, ES modules), déploiement Netlify — PAS un Cloudflare Worker
 
 ---
@@ -17,8 +17,8 @@ Le cribbage régulier 1v1 n'est **pas un mode produit prioritaire**. Les modules
 ### Implémentation réelle actuelle
 - Phase 1 ✅ `cards.js` + `scoring.js` — 12 tests verts
 - Phase 2 ✅ `deck.js` — 9 tests verts
-- Phase 3 ✅ `pegging.js` — 23 tests verts, **actuellement limité à 2 joueurs**
-- 44 tests verts au total (`node --test`)
+- Phase 3 ✅ `pegging.js` — 29 tests verts, **généralisé 2 à 12 joueurs** (modes `regular` + `course`)
+- 50 tests verts au total (`node --test`)
 - `game-engine.js` ⏳ absent
 - `track.js` ⏳ absent
 - UI/PWA ⏳ absente
@@ -41,7 +41,7 @@ RaceCribbage/
 │   ├── cards.js     ✅ modèle carte + utilitaires
 │   ├── scoring.js   ✅ scoring show standard, actuellement conçu pour 4 + 5e carte
 │   ├── deck.js      ✅ donne régulière + primitive Qualif actuelle
-│   └── pegging.js   ✅ moteur pegging 2 joueurs uniquement
+│   └── pegging.js   ✅ moteur pegging 2 à 12 joueurs — modes `regular` / `course`
 ├── tests/
 │   ├── scoring.test.js  ✅
 │   ├── deck.test.js     ✅
@@ -171,8 +171,35 @@ La carte universelle peut servir de 5e carte aux colonnes selon la logique de cr
 - ordre de départ du pegging : ordre de position sur la piste, le joueur le plus avancé jouant en premier ;
 - cumul maximum : 31 ;
 - scoring de base : 15, 31, paires, suites, go ;
-- le pivot actuel de **plancher 1 point par carte lorsqu'aucune combinaison ne marque** est conservé comme règle de travail, sauf révision ultérieure explicite ;
-- les détails exacts du `go`, de la remise à zéro et de l'ouverture du cumul suivant à 12 joueurs restent à formaliser dans le projet de développement.
+- le pivot actuel de **plancher 1 point par carte lorsqu'aucune combinaison ne marque** est conservé comme règle de travail, sauf révision ultérieure explicite ; ce calcul réel/plancher est **identique** entre `regular` et `course`.
+
+#### Formalisé (RULES.md v13 §3, implémenté dans `pegging.js` — mode `course`)
+
+- **Fermeture d'une séquence** : `go` = 1 point à la dernière carte posée dès que plus
+  aucun joueur ne peut alimenter le cumul (main vide, `go` déjà annoncé, ou aucun coup légal) ;
+  `31 pile` = 2 points et remplace le `go`. `pegging.js` ferme automatiquement sans exiger
+  un `sayGo` explicite lorsque le double blocage est certain.
+- **Ouverture du cumul suivant** : après un `go` ou un `31 pile`, le prochain à ouvrir le
+  cumul à 0 est le joueur **suivant dans l'ordre initial de la manche** — index `(i + 1) % N`
+  où `i` est l'index du joueur qui a fermé. Les joueurs sans carte sont sautés (ils marquent
+  leur plancher auto au passage, voir ci-dessous), donc la réouverture revient toujours à un
+  joueur qui a effectivement une carte. À 2 joueurs = l'autre joueur (mode `regular` inchangé).
+- **Joueur ayant épuisé sa main** : il reste dans la rotation et marque **automatiquement
+  1 point plancher à chaque fois que le tour repasse sur lui**, sans action, jusqu'à ce que
+  **toutes les mains soient vides** — y compris à travers plusieurs remises à 0. Le mode
+  `regular` ne fait pas cela (le joueur fini est simplement sauté).
+- `playCard` expose sur l'événement le **type de point** (`pointKind` : `real` pour une
+  combinaison / `go` / `31`, `floor` pour un plancher pur, `null` sinon) pour le futur
+  `game-engine.js` (nature du point → règle de déplacement, cf. section 5).
+
+**Note :** `createPegging` accepte 2 à 12 joueurs (souplesse du module, tests). La Course
+canonique en utilise **12** ; l'ordre des joueurs est fourni par l'appelant, jamais calculé
+par `pegging.js`.
+
+#### Reste à formaliser côté Course
+
+- interaction pegging ↔ avancement immédiat du pion (chaque point marqué déplace le pion
+  pendant le pegging) : géré par `game-engine.js` / `track.js`, pas par `pegging.js`.
 
 ### Comptage des mains
 
@@ -284,7 +311,7 @@ La règle détaillée des combinaisons applicables au cheapcrib doit être expli
 | `cards.js` | ✅ implémenté | réutilisable |
 | `scoring.js` | ✅ implémenté pour scoring standard 4+5e | à adapter pour cheapcrib 4 cartes |
 | `deck.js` | ✅ implémenté | ajouter donne Course 13×4 ; conserver/adapt. Qualif |
-| `pegging.js` | ✅ 2 joueurs uniquement | généralisation ou moteur dédié 12 joueurs nécessaire |
+| `pegging.js` | ✅ généralisé 2 à 12 joueurs, modes `regular` / `course` | prêt pour la Course ; branchement pegging ↔ piste à faire dans `game-engine.js` |
 | `game-engine.js` | ⏳ absent | doit orchestrer Qualif + Course |
 | `track.js` | ⏳ absent | nécessaire au produit principal |
 | UI/PWA | ⏳ absente | après stabilisation suffisante du moteur |
@@ -302,9 +329,10 @@ Il ne faut cependant plus laisser son existence orienter le produit vers un jeu 
 
 # Points ouverts
 
-## BLOQUANT AVANT IMPLÉMENTATION DES SOUS-SYSTÈMES CONCERNÉS
-
-1. **Pegging à 12 joueurs** : règle exacte du `go`, de la fermeture d'une séquence et du joueur qui ouvre la suivante.
+1. ~~**Pegging à 12 joueurs** : règle exacte du `go`, de la fermeture d'une séquence et du
+   joueur qui ouvre la suivante.~~ **RÉSOLU (v2.6)** — formalisé RULES.md v13 §3 et implémenté
+   dans `pegging.js` (mode `course`) : voir section 3 « Pegging › Formalisé ». Reste au
+   `game-engine.js` : brancher chaque point marqué sur l'avancement immédiat du pion.
 2. **Cheapcrib 4 cartes** : préciser exactement les règles de flush/nobs et toute différence de scoring par rapport à une main normale.
 3. **Déplacement multi-points** : résolution lorsqu'un joueur marque plusieurs points avec obstacles et possibilités diagonales.
 4. **Points non dépensables** : perdus, reportés ou autre comportement.
@@ -342,6 +370,23 @@ Les éléments suivants restent des extensions futures et ne doivent pas bloquer
 **Attention : la Course à 12 joueurs, la piste 3 voies, le hotseat local et la possibilité de NPC de base ne sont PAS dans cette liste : ils appartiennent au produit RaceCribbage.**
 
 ---
+
+# Décisions récentes — v2.6
+
+- `pegging.js` **généralisé de 2 à 12 joueurs**, deux modes cohabitant : `regular` (défaut,
+  comportement historique strictement inchangé) et `course`. Signature :
+  `createPegging(order, hands, { mode })`.
+- **Formalisation du pegging à 12 joueurs** (RULES.md v13 §3) : fermeture `go` / `31 pile`,
+  ouverture du cumul suivant = joueur suivant dans l'ordre initial `(i + 1) % N`, joueur
+  ayant fini sa main qui reste dans la rotation et marque 1 plancher auto par tour jusqu'à
+  ce que toutes les mains soient vides (à travers les remises à 0). Détail : section 3.
+- `playCard` expose `pointKind` (`real` / `floor` / `null`) sur l'événement, pour la future
+  distinction « nature du point » du déplacement sur piste.
+- Le calcul réel/plancher est **identique** entre `regular` et `course` (pas de branche) —
+  correction d'une hypothèse antérieure « 0 pt en régulier ».
+- Tests : 23 cas `regular` inchangés + 6 cas `course` → **29 tests `pegging` verts, 50 au total**.
+- Point ouvert BLOQUANT #1 (« pegging à 12 ») → **résolu**. `game-engine.js` / `track.js`
+  restent à faire ; `pegging.js` ne calcule jamais l'ordre des joueurs ni n'avance de pion.
 
 # Décisions récentes — v2.5
 
