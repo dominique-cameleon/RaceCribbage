@@ -1,7 +1,11 @@
 <!-- SYSMAP -->
 # SYSMAP — RaceCribbage
-Version : 2.6 | 2026-09-02
+Version : 2.7 | 2026-09-03
 Cible : PWA JS pur (HTML/CSS/JS, ES modules), déploiement Netlify — PAS un Cloudflare Worker
+
+**Règles du jeu : `RULES.md` fait autorité.** Ce sysmap ne reproduit plus le détail des
+règles — il en donne un résumé court et renvoie à la section concernée de `RULES.md`.
+Backlog technique et dette : `TODO.md`.
 
 ---
 
@@ -10,7 +14,7 @@ Cible : PWA JS pur (HTML/CSS/JS, ES modules), déploiement Netlify — PAS un Cl
 Le concept canonique est **RaceCribbage : une course de cribbage à 12 joueurs sur une piste à 3 voies**.
 La Course n'est pas une V2 optionnelle : elle fait partie du produit principal.
 
-Le projet comprend aussi une **qualification de type cribbage chinois**, jouée avec **au moins 4 colonnes + un cheapcrib de 4 cartes**. Le total le plus élevé obtient la position de départ la plus avancée.
+Le projet comprend aussi une **Qualif solo** (modèle grille 4×4 + cheapcrib de 4 cartes, voir RULES.md §2). Le total le plus élevé obtient la position de départ la plus avancée.
 
 Le cribbage régulier 1v1 n'est **pas un mode produit prioritaire**. Les modules déjà développés à partir du cribbage régulier sont conservés comme briques techniques, références de scoring et base de tests. Un autre format pourra éventuellement servir un futur mode DragRace, mais ce point peut attendre.
 
@@ -117,36 +121,27 @@ Le niveau d'intelligence, les stratégies et la sophistication des NPC sont **PE
 
 ---
 
-## 2. Qualification — cribbage chinois
+## 2. Qualification — Qualif solo
 
 La qualification sert à déterminer l'ordre de départ de la Course.
 
-### ÉTABLI
+### Résumé — voir RULES.md §2
 
-- Il s'agit du **cribbage chinois**.
-- Chaque qualification utilise **au moins 4 colonnes** de cartes plus un crib.
-- L'implémentation actuelle est basée sur **4 colonnes** ; l'éventuelle variation du nombre de colonnes peut être traitée plus tard.
-- Le crib de qualification est un **cheapcrib : 4 cartes seulement**.
-- Le total obtenu par chaque participant sert au classement de qualification.
-- **Total le plus élevé = position la plus en avant sur la grille de départ.**
+Mode **solo**, joué une fois par chacun des 12 participants. Modèle **grille 4×4**
+(Cribbage Squares) : 20 cartes révélées une à une (les positions %5==0 vont au crib),
+puis coupe d'une carte universelle en 5e carte ; **9 mains** scorées (4 rangées + 4 colonnes
++ cheapcrib de 4 cartes). Score final = somme des 9 mains → position de départ Course
+(score le plus élevé = le plus en avant). Départage d'égalité : **résolu, voir RULES.md §2 (#8)**.
 
-### Mécanique actuellement implémentée comme base de travail
+### Dette technique
 
-`deck.js` contient déjà `dealQualifRound(deck)` :
-- 4 cartes visibles ;
-- 1 carte cachée ;
-- paquet restant.
-
-Le modèle existant de 4 manches permettant d'obtenir 4 colonnes de 4 cartes + 4 cartes de crib peut être conservé comme base, mais doit respecter la règle canonique suivante :
-
-> **Le cheapcrib est compté avec ses 4 cartes seulement. La carte universelle n'est pas ajoutée au crib comme cinquième carte.**
-
-La carte universelle peut servir de 5e carte aux colonnes selon la logique de cribbage chinois déjà retenue ; son intégration exacte dans le moteur doit être vérifiée lors de l'adaptation de `scoring.js` / `game-engine.js`.
+`dealQualifRound` (`deck.js`) et `scoreShow` (`scoring.js`) suivent encore l'ancien modèle
+(distribution par round/colonne, 5 mains). Réécriture complète nécessaire pour le modèle
+grille 4×4. **Voir `TODO.md` — « Dette technique connue ».**
 
 ### PROVISOIRE / à préciser plus tard
 
-- départage d'égalité en qualification ;
-- nombre de colonnes supérieur à 4 ;
+- nombre de colonnes supérieur à 4 (le canonique est 4×4) ;
 - modalités exactes d'enchaînement des qualifications pour les 12 participants dans l'UI.
 
 ---
@@ -207,7 +202,8 @@ par `pegging.js`.
 - le crib est compté séparément en **cheapcrib de 4 cartes seulement** ;
 - ordre de comptage : selon l'ordre de piste ;
 - le crib est compté en dernier par le donneur ;
-- donneur suivant : joueur en dernière position après le comptage des 12 mains, sous réserve de définir le premier donneur de la première manche.
+- donneur suivant : joueur en dernière position après le comptage des 12 mains ;
+- premier donneur de la manche 1 : **résolu, voir RULES.md §2** (dernier au classement Qualif).
 
 ---
 
@@ -266,18 +262,14 @@ Cette géométrie est une **base de prototype utile**, pas encore une fermeture 
 
 ## 6. Grille de départ
 
-### ÉTABLI
+### Résumé — voir RULES.md §6
 
-- la qualification produit un score pour chaque participant ;
-- classement décroissant ;
-- **score le plus élevé = départ le plus en avant** ;
-- les pions sont initialement placés sur les voies extérieures, regroupés près de la ligne de départ.
-
-### PEUT ATTENDRE
-
-- alternance exacte entre voie extérieure haute et basse ;
-- position exacte de la pole ;
-- départage des égalités.
+**Résolu (RULES.md §6 v10).** Chicane à **4 voies** (a/b/c/d) juste avant la ligne
+départ/arrivée, élargissement temporaire du tracé pour loger les 12 pions sans blocage forcé
+au 1er tour. Rangs Qualif répartis en alternance stricte voie c (impairs) / voie b (pairs),
+6 rangs de profondeur ; `rang1 → c1` (pole, collé à la ligne). La voie d se prolonge 1 trou
+après la ligne puis fusionne vers le format 3 voies (dépassement diagonal classique, §5).
+Détail complet + table de répartition des 12 rangs : **RULES.md §6**.
 
 ---
 
@@ -300,7 +292,7 @@ Le crib RaceCribbage et le crib de qualification sont **des mains de 4 cartes se
 
 `scoring.js` est actuellement structuré autour de `hand4 + fifthCard`, et sa logique crib standard exige 5 cartes pour le flush. Une adaptation spécifique au **cheapcrib 4 cartes** sera donc nécessaire.
 
-La règle détaillée des combinaisons applicables au cheapcrib doit être explicitée dans le moteur sans réintroduire implicitement les règles du crib standard à 5 cartes.
+La règle est **figée : voir RULES.md §3 (v7)** — comptage sur les 4 cartes telles quelles, flush crib = 4 pts. Le moteur doit l'appliquer sans réintroduire implicitement les règles du crib standard à 5 cartes.
 
 ---
 
@@ -333,17 +325,23 @@ Il ne faut cependant plus laisser son existence orienter le produit vers un jeu 
    joueur qui ouvre la suivante.~~ **RÉSOLU (v2.6)** — formalisé RULES.md v13 §3 et implémenté
    dans `pegging.js` (mode `course`) : voir section 3 « Pegging › Formalisé ». Reste au
    `game-engine.js` : brancher chaque point marqué sur l'avancement immédiat du pion.
-2. **Cheapcrib 4 cartes** : préciser exactement les règles de flush/nobs et toute différence de scoring par rapport à une main normale.
-3. **Déplacement multi-points** : résolution lorsqu'un joueur marque plusieurs points avec obstacles et possibilités diagonales.
-4. **Points non dépensables** : perdus, reportés ou autre comportement.
+2. ~~**Cheapcrib 4 cartes** : préciser exactement les règles de flush/nobs et toute différence
+   de scoring par rapport à une main normale.~~ **RÉSOLU (v2.7)** — RULES.md §3 (v7) : comptage
+   sur les 4 cartes telles quelles, flush crib = 4 pts. Reste à faire côté code : adapter
+   `scoring.js` (voir table Modules & TODO.md).
+3. ~~**Déplacement multi-points** : résolution lorsqu'un joueur marque plusieurs points avec
+   obstacles et possibilités diagonales.~~ **RÉSOLU (v2.7)** — RULES.md §5 (v9) : algorithme
+   de déplacement (pas à pas, diagonale = 1 pas d'avancement, une voie à la fois, trou visé
+   libre ; choix du joueur seulement si destinations finales distinctes).
+4. ~~**Points non dépensables** : perdus, reportés ou autre comportement.~~ **RÉSOLU (v2.7)** —
+   RULES.md §5 (v9, #4) : pion totalement bloqué → points **perdus, sans compensation** ;
+   événement compté en statistiques de manche (détail moteur — voir `TODO.md` tâche 6).
 
-Ces questions n'empêchent pas de conserver les briques existantes ; elles doivent être tranchées avant de coder les modules concernés.
+**Les 4 points ci-dessus sont résolus** (règles figées dans `RULES.md`). Ce qui reste est du
+travail de code, pas de décision de règle.
 
 ## PEUT ATTENDRE
 
-- départage des égalités de qualification ;
-- premier donneur de la première manche ;
-- répartition exacte de la grille entre les deux voies extérieures ;
 - sophistication des NPC ;
 - courbes réalistes et longueurs variables par voie ;
 - plusieurs pistes / niveaux ;
@@ -370,6 +368,29 @@ Les éléments suivants restent des extensions futures et ne doivent pas bloquer
 **Attention : la Course à 12 joueurs, la piste 3 voies, le hotseat local et la possibilité de NPC de base ne sont PAS dans cette liste : ils appartiennent au produit RaceCribbage.**
 
 ---
+
+# Décisions récentes — v2.7
+
+**Resynchronisation documentaire — aucune fonctionnalité, aucun code touché, tests inchangés (50/50).**
+
+- Création à la racine du dépôt de **`RULES.md`** (Version 13), **`TODO.md`** et **`README.md`**.
+  Le dépôt devient autonome : règles, backlog et état d'implémentation ne dépendent plus de
+  Claude Chat. `ARCHITECTURE.md` reste abandonné (contenu utile couvert ici).
+- **`RULES.md` fait désormais autorité pour les règles.** Le sysmap cesse de reproduire le
+  détail : il résume et renvoie à `RULES.md §X` — pattern déjà appliqué au pegging en v2.6,
+  généralisé aux sections 2 (Qualif), 5 (piste), 6 (grille de départ).
+- **Points ouverts #2, #3, #4 → RÉSOLUS** (RULES.md §3 v7 pour le cheapcrib ; RULES.md §5 v9
+  pour l'algorithme de déplacement et les points non dépensables). Les 4 points ouverts sont
+  désormais tous résolus au plan des règles.
+- **Départage égalité Qualif** (RULES.md §2 #8) et **premier donneur manche 1** (RULES.md §2 #7)
+  → résolus ; retirés des listes « à préciser » / « PEUT ATTENDRE ».
+- **Grille de départ Course** : chicane à 4 voies avant la ligne (RULES.md §6 v10) ; section 6
+  du sysmap réduite à un résumé + renvoi. L'ancienne mention « voies extérieures » était
+  périmée (la voie centrale b reçoit les rangs pairs).
+- **Modèle Qualif canonique = grille 4×4 séquentielle** (RULES.md §2). Le code actuel
+  (`dealQualifRound`, `scoreShow`) suit l'ancien modèle → dette tracée dans `TODO.md`.
+- Vérification des références `RULES.md` dans `js/` : **aucune** — `cards.js`, `scoring.js`,
+  `deck.js`, `pegging.js` ne citent que `sysmap-racecribbage.md`. Rien à ajuster.
 
 # Décisions récentes — v2.6
 
